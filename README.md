@@ -6,7 +6,9 @@ Autores: Daniel Esteban Hurtado Andrade y Juan David Peña Acosta.
 
 ## Uso
 
-Abre la web, selecciona el objetivo y completa los atributos. Para probar sin una foto, marca «Probar el ejemplo histórico completo» y genera el pronóstico. El modelo visual reproduce aproximadamente 12,93 unidades; la mediana, 12,00. Para analizar una imagen propia, desmarca el ejemplo y sube PNG/JPEG de hasta 8 MB y 12 megapíxeles. Se muestran doce semanas y exportación CSV.
+Abre la web y elige «Mi propia prenda». Selecciona categoría, color, tejido, tienda histórica, temporada y fecha, carga una foto PNG/JPEG (hasta 8 MB y 12 megapíxeles) y pulsa «Generar pronóstico». Se muestran la imagen utilizada, doce semanas, el total, CSV y una ficha JSON con los atributos y la huella de la imagen. «Ejemplo histórico» es un modo separado: reemplaza explícitamente imagen y atributos.
+
+El precio opcional y la moneda sirven únicamente para un escenario aritmético de ingresos brutos (unidades × precio). No cambian la demanda estimada, no son variables del modelo y no estiman rentabilidad. No existe análisis de texto libre ni clasificación automática de los atributos. La fotografía debe corresponder a la categoría elegida.
 
 ## Modelos y alcance
 
@@ -20,7 +22,11 @@ Python 3.11. Instalar `pip install -r requirements.txt`, ejecutar `streamlit run
 
 ## Verificación al 20 de noviembre de 2026
 
-Pasaron las pruebas locales del paquete y de la interfaz, incluyendo ambos objetivos y rechazo de imagen ausente. En la web pública se comprobó la inferencia del ejemplo visual con las mismas doce predicciones. La URL responde HTTP 200 con una sesión HTTP nueva sin credenciales. Pendiente completar la comprobación del selector de archivos, descarga efectiva en navegador, móvil y reactivación tras reposo; la automatización del navegador se interrumpió en las pruebas de archivos. No se presenta la entrega como completamente validada todavía.
+Pasaron las pruebas locales de los dos objetivos, imagen obligatoria, carga de bytes de una foto distinta, atributos propios, repetibilidad, rechazo de imagen corrupta, límite de tamaño y temporada inválida. Las consultas inválidas eliminan resultados previos. Duplicar el precio conserva las unidades y duplica solo el escenario de ingresos.
+
+En producción se cargó un JPEG distinto mediante el selector de archivos, con el modo «Mi propia prenda» y categoría modificada. El resultado de prueba fue 12,7472884727803 unidades. Se descargaron CSV y JSON y se verificaron las doce semanas, suma, atributos y SHA256 de la foto contra el cálculo local. Esa prueba comprueba integración técnica, no exactitud comercial ni coherencia automática entre categoría e imagen. Se inspeccionaron formulario y resultado a 390 × 844 píxeles. Los ejemplos históricos siguen reproducibles (visual 12,93; mediana 12,00).
+
+La URL responde HTTP 200 con sesión HTTP nueva sin credenciales. No se realizó una sesión completa de inferencia anónima, prueba de carga concurrente ni prueba del ciclo de hibernación. La revisión móvil fue de viewport, no en un teléfono físico.
 
 ## Alojamiento
 
