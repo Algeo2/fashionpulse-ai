@@ -14,6 +14,16 @@ sys.path.insert(0, str(ROOT / 'bundle/work/fashionpulse_service'))
 from service import Predictor
 
 st.set_page_config(page_title='FashionPulse AI', page_icon='👗', layout='wide')
+st.markdown('''<style>
+.stApp {background:#faf8f4;color:#24212b}
+.block-container {max-width:1180px;padding-top:2.5rem}
+h1 {letter-spacing:-.055em;font-size:3.2rem!important;color:#30213f}
+h2,h3 {letter-spacing:-.025em}
+[data-testid="stForm"] {background:white;border:1px solid #e8e1ed;border-radius:18px;padding:1.6rem}
+[data-testid="stMetric"] {background:#eee7f6;border-radius:14px;padding:1.4rem}
+[data-testid="stMetricValue"] {color:#684293}
+[data-testid="stBaseButton-primary"] {background:#7046a0;border-color:#7046a0}
+</style>''', unsafe_allow_html=True)
 
 @st.cache_resource
 def predictor():
@@ -42,17 +52,21 @@ with tab_predict:
         with cols[1]:
             payload['release_date'] = st.date_input('Fecha de lanzamiento', date.fromisoformat(meta['example']['release_date']), min_value=date(2016,1,1), max_value=date(2100,12,31)).isoformat()
         photo = st.file_uploader('Fotografía PNG o JPEG (máximo 8 MB y 12 megapíxeles)', type=['png','jpg','jpeg'])
+        use_example = st.checkbox('Probar el ejemplo histórico completo (reemplaza atributos y fotografía)', value=False)
         st.caption('La fotografía se procesa en memoria; esta aplicación no la incorpora al entrenamiento ni la guarda en un catálogo.')
         submitted = st.form_submit_button('Generar pronóstico', type='primary')
     if submitted:
         st.session_state.pop('forecast_result', None)
         try:
+            if use_example:
+                payload = dict(meta['example'], objective=objective)
             if objective == 'total_12weeks':
-                if photo is None:
+                if photo is None and not use_example:
                     raise ValueError('Sube una fotografía para utilizar el modelo visual.')
-                if photo.size > 8_000_000:
+                if photo is not None and photo.size > 8_000_000 and not use_example:
                     raise ValueError('La fotografía supera los 8 MB.')
-                payload['image_base64'] = base64.b64encode(photo.getvalue()).decode('ascii')
+                image_bytes = (ROOT/'bundle/runtime/example.png').read_bytes() if use_example else photo.getvalue()
+                payload['image_base64'] = base64.b64encode(image_bytes).decode('ascii')
             with st.spinner('Calculando con el modelo entrenado…'):
                 result = model.predict(payload)
             st.session_state['forecast_result'] = {'result':result, 'inputs':{k:v for k,v in payload.items() if k != 'image_base64'}}
