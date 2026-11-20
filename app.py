@@ -1,6 +1,8 @@
 """Public academic UI; inference uses the unchanged sealed portable models."""
 from pathlib import Path
 import base64
+import io
+import hashlib
 import json
 import sys
 from datetime import date
@@ -34,30 +36,42 @@ st.caption('Pronósticos de las primeras 12 semanas de una prenda por tienda')
 st.info('Prototipo académico con VISUELLE2 histórico. No validado para ventas actuales en Colombia. Las cantidades no representan probabilidad de éxito ni rentabilidad.')
 model = predictor()
 meta = model.metadata()
+if 'forecast_result' in st.session_state and 'revenue_scenario' not in st.session_state['forecast_result']:
+    st.session_state.pop('forecast_result')
 tab_predict, tab_evidence, tab_about = st.tabs(['Analizar prenda', 'Resultados de evaluación', 'Acerca del proyecto'])
 with tab_predict:
     st.write('Elige un objetivo, completa los atributos y genera un pronóstico. El modelo visual necesita una fotografía de la prenda.')
     objective = st.radio('Objetivo del pronóstico', ['total_12weeks', 'weekly_mae'], format_func=lambda x: {'total_12weeks':'Estimar el total de 12 semanas · modelo con imagen','weekly_mae':'Reducir el error semanal · mediana por categoría'}[x])
     if objective == 'weekly_mae':
         st.caption('Esta referencia utiliza solo la categoría. La fecha organiza las semanas; la fotografía y los demás atributos no cambian sus cantidades.')
+    source = st.radio('Prenda que quieres analizar', ['Mi propia prenda', 'Ejemplo histórico'], horizontal=True)
+    use_example = source == 'Ejemplo histórico'
+    if use_example:
+        st.info('Se usarán la fotografía y todos los atributos del ejemplo histórico. Para introducir tus datos, selecciona Mi propia prenda.')
+    else:
+        st.caption('Usa una foto clara de una sola prenda, preferiblemente sobre fondo neutro. El modelo extrae rasgos visuales; no verifica que la foto corresponda a una prenda ni identifica automáticamente sus atributos.')
     with st.form('forecast_form'):
         cols = st.columns(2)
         payload = {'objective': objective}
         for i, (key, label) in enumerate([('category','Categoría'), ('color','Color'), ('fabric','Tejido'), ('retail','Tienda histórica')]):
             options = meta['options'][key]
             with cols[i % 2]:
-                payload[key] = st.selectbox(label, options, index=options.index(meta['example'][key]))
+                payload[key] = st.selectbox(label, options, index=options.index(meta['example'][key]), disabled=use_example)
         with cols[0]:
-            payload['season'] = st.text_input('Temporada (SS18 o AW18)', meta['example']['season'])
+            payload['season'] = st.text_input('Temporada (SS18 o AW18)', meta['example']['season'], disabled=use_example)
         with cols[1]:
-            payload['release_date'] = st.date_input('Fecha de lanzamiento', date.fromisoformat(meta['example']['release_date']), min_value=date(2016,1,1), max_value=date(2100,12,31)).isoformat()
-        photo = st.file_uploader('Fotografía PNG o JPEG (máximo 8 MB y 12 megapíxeles)', type=['png','jpg','jpeg'])
-        use_example = st.checkbox('Probar el ejemplo histórico completo (reemplaza atributos y fotografía)', value=False)
+            payload['release_date'] = st.date_input('Fecha de lanzamiento', date.fromisoformat(meta['example']['release_date']), min_value=date(2016,1,1), max_value=date(2100,12,31), disabled=use_example).isoformat()
+        st.caption('SS = primavera/verano; AW = otoño/invierno. La tienda es un escenario de la cadena histórica: sus códigos no representan tu tienda ni tu país.')
+        unit_price = st.number_input('Precio unitario para escenario de ingresos (opcional; 0 = omitir)', min_value=0.0, max_value=100000000.0, value=0.0, step=1000.0, format='%.2f')
+        currency = st.selectbox('Moneda del precio', ['COP', 'USD', 'EUR'])
+        st.caption('El precio no cambia las unidades pronosticadas. Se usa únicamente para multiplicar unidades por precio: no es una estimación de rentabilidad ni un modelo de sensibilidad al precio.')
+        photo = st.file_uploader('Fotografía PNG o JPEG (máximo 8 MB y 12 megapíxeles)', type=['png','jpg','jpeg'], disabled=use_example or objective == 'weekly_mae')
         st.caption('La fotografía se procesa en memoria; esta aplicación no la incorpora al entrenamiento ni la guarda en un catálogo.')
         submitted = st.form_submit_button('Generar pronóstico', type='primary')
     if submitted:
         st.session_state.pop('forecast_result', None)
         try:
+            image_bytes = None
             if use_example:
                 payload = dict(meta['example'], objective=objective)
             if objective == 'total_12weeks':
@@ -69,7 +83,21 @@ with tab_predict:
                 payload['image_base64'] = base64.b64encode(image_bytes).decode('ascii')
             with st.spinner('Calculando con el modelo entrenado…'):
                 result = model.predict(payload)
-            st.session_state['forecast_result'] = {'result':result, 'inputs':{k:v for k,v in payload.items() if k != 'image_base64'}}
+            # Keep only a small preview in session memory, never on disk.
+            preview = None
+            if image_bytes is not None:
+                from PIL import Image, ImageOps
+                with Image.open(io.BytesIO(image_bytes)) as uploaded:
+                    thumbnail = ImageOps.exif_transpose(uploaded).convert('RGB')
+                    thumbnail.thumbnail((480,480))
+                    buffer = io.BytesIO()
+                    thumbnail.save(buffer, format='JPEG')
+                    preview = buffer.getvalue()
+            st.session_state['forecast_result'] = {'result':result, 'inputs':{k:v for k,v in payload.items() if k != 'image_base64'},
+                'source':source, 'revenue_scenario':{'unit_price':unit_price, 'currency':currency,
+                    'gross_revenue':result['total_12weeks'] * unit_price if unit_price > 0 else None,
+                    'affects_demand_forecast':False},
+                'preview':preview, 'image_sha256':hashlib.sha256(image_bytes).hexdigest() if image_bytes else None}
         except ValueError as exc:
             st.error(str(exc))
         except Exception:
@@ -79,11 +107,20 @@ with tab_predict:
         result = saved['result']
         st.subheader('Último pronóstico calculado')
         st.caption('Corresponde a los atributos que se muestran abajo. Si cambias el formulario, vuelve a generar el pronóstico.')
+        st.write('Origen:', saved['source'])
+        if saved['preview']:
+            st.image(saved['preview'], caption='Fotografía utilizada en este cálculo', width=240)
         st.metric('Total estimado en 12 semanas', f"{result['total_12weeks']:.2f} unidades")
+        scenario = saved['revenue_scenario']
+        if scenario['gross_revenue'] is not None:
+            st.metric('Escenario de ingresos brutos (sin costos)', f"{scenario['currency']} {scenario['gross_revenue']:,.2f}")
+            st.caption(f"Cálculo aritmético: unidades estimadas × {scenario['currency']} {scenario['unit_price']:,.2f}. El precio no fue una variable de entrenamiento y no modifica la demanda.")
         frame = pd.DataFrame(result['forecast']).rename(columns={'week':'Semana','start_date':'Inicio','end_date':'Fin','units':'Unidades'})
         st.line_chart(frame.set_index('Semana')['Unidades'])
         st.dataframe(frame, hide_index=True, use_container_width=True)
         st.download_button('Descargar pronóstico CSV', frame.to_csv(index=False).encode('utf-8-sig'), 'fashionpulse-pronostico.csv', 'text/csv')
+        report = {k:v for k,v in saved.items() if k != 'preview'}
+        st.download_button('Descargar ficha completa JSON', json.dumps(report, ensure_ascii=False, indent=2), 'fashionpulse-ficha.json', 'application/json')
         with st.expander('Atributos utilizados y modelo'):
             st.json(saved['inputs'])
             st.write('Modelo:', result['model'])
